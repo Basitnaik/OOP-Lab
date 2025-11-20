@@ -1,11 +1,9 @@
 #include <stdio.h>
 int main(){
-    int numb,sum=0;
-<<<<<<< HEAD
-    printf("enter the number=");
-=======
+    int numb,sum;
     printf("enter the number");
->>>>>>> f7bc27d (Added remaining files)
+    printf("enter the number");
+
     scanf("%d",&numb);
     for(int i=0;i<=numb;i++){
         sum+=i;

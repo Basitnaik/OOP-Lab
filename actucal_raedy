@@ -1,0 +1,725 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
+#include "BLEDevice.h" // For Bluetooth Scanning
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 19800; // +5:30 for India
+const int   daylightOffset_sec = 0;
+
+// ==================== CONFIGURATION ====================
+const char* ssid = "Esp";
+const char* password = "00000000";
+
+String BOT_TOKEN = "8529559407:AAFeABkwhT7pG2zoxPWq8z2fXvhrVApFNaY";
+String CHAT_ID = "2029841901";
+
+// ==================== ROOT CA CERTIFICATE ====================
+// This is the DigiCert Global Root CA
+const char* TELEGRAM_CERTIFICATE_ROOT = \
+"-----BEGIN CERTIFICATE-----\n" \
+"MIIDrzCCApegAwIBAgIQCDvgVpBCRrG804GVEsdTOjANBgkqhkiG9w0BAQsFADBh\n" \
+"MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3\n" \
+"d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH\n" \
+"MjAeFw0xMzAzMDgxMjAwMDBaFw0yMzAzMDgxMjAwMDBaMGExCzAJBgNVBAYTAlVT\n" \
+"MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j\n" \
+"b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkqhkiG\n" \
+"9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8mBKYTBSSgrAD8OQ+AY0yigKYgA\n" \
+"uz2taA0MOv3L9b2MOe2USY1hE9y+N6nmYlS2+e6yXo1c0VqA6g7T/mFWJmOKvM4n\n" \
+"m80jMKwNq9s4n9EtIEgRjCD4G3a3tI/j4gMvjEF32U/S+mY0mDkd5p4mXqg+m/\n"   \
+"nluMv9wza2vjMIEf5cK7GZ8o2YFpLdYm0vU/hXnNQQQO7Gc0o/0S3+yho4cKSoT2\n" \
+"Z5iGLfGW/xQ+XlCvGIAv43iCjNqjWxWa8mXSRlGjW2iLbmNYE6SjKERb0cwhl1u3\n" \
+"fCRwJd2QA3vjEcNregQdGPMQ3ZtZNnLzAT1EYSA/c2gmHOZebOPvPCLbC/2j/d1c\n" \
+"kEwflrNAzR2y+C/gB8a/vFpUeM1c0NfHh3WW1/PktstqP51T/xoONMv0Gvj8H5O+\n" \
+"DRCO2BD3iVfT/m1M2xPb3dkt0OksvAYpGvBjNLbT/N9W1fP/v1lmyAci3u1XnsO8\n" \
+"tstgds9oRBUyqjmqwCN/gMZYtshBv15tT/A01CSgYEDL/tG9mfu7lHxfjS24LwVs\n" \
+"L/2wX0mKjT0gNdrh+tLNe1F1F8vpgsAt2jGj9uJd3PqXROnI3vV7wJp/wzHn0qiO\n" \
+"c/jVvJqgYPGqvFMxV+ZdeYkLI8sH2sL3HUm8yUa9zQc/tN/XyT/wSK/rJ/aFfFwP\n" \
+"aGuoh4o/b2/iHqgS+z/2LMkE/U3m1yC+TCMp0iM1cVEDm08kh1i/Yh3wYyE13QyL\n" \
+"P/vW0PtoDzoMEn/M32vfl+zM1Yp/1/w2IDCwLz1yEwYjYk3MbdheZpY1u9aK1L+\n" \
+"T+Fmeq9rQcN/eonNfWxP0I2c9S9M8i1s3c6AHeNT3iE/iA+Lh/oY+rY5JqPz6/J/\n" \
+"NPSVpNOo8zMEsApuKkEw/SHpTFHwYndwAoKjHdrmIli9qZq3bCWBk/YDfD3aXg/\n" \
+"V/o1j6q7bmdBf1cNvLveaS6o+mITyTjVGXbYXv/G/f+StxN1jA3HVnAi+sFwY64V\n" \
+"I86fE+hM1/cbh3hproxk3wW3/fO3PlAmL1mO/DR/z/w/rLYP3PzJpS+N6N8NlE1p\n" \
+"m7VbC9TzAV0WBCJkPBAIcZkUPDkseE/r5hScbBv2/u5Pq2E/y/tYvXqYf4Rk+vY=\n" \
+"-----END CERTIFICATE-----\n";
+
+// ==================== SENSOR PINS ====================
+#define SOUND_SENSOR_PIN 34
+#define STATUS_LED_PIN 2
+
+// ==================== SYSTEM VARIABLES ====================
+String deviceLocation = "CSE Ground Floor Washroom";
+unsigned long lastAlertTime = 0;
+
+// Baseline values (calibrated at startup)
+int baselineSoundLevel = 0;
+int baselineWiFiDevices = 0;
+int baselineBTDevices = 0;
+
+// Current sensor values
+int soundLevel = 0;
+int wifiDevices = 0;
+int btDevices = 0;
+
+// Peak thresholds (multipliers of baseline)
+float SOUND_PEAK_MULTIPLIER = 2.5;  // Alert if sound is 2.5x baseline
+float WIFI_PEAK_MULTIPLIER = 1.8;   // Alert if WiFi devices are 1.8x baseline
+float BT_PEAK_MULTIPLIER = 1.8;     // Alert if BT devices are 1.8x baseline
+
+bool systemCalibrated = false;
+bool timeInitialized = false;
+
+// ==================== SETUP ====================
+void setup() {
+  Serial.begin(115200);
+  
+  // Configure pins
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  pinMode(SOUND_SENSOR_PIN, INPUT);
+  
+  digitalWrite(STATUS_LED_PIN, HIGH); // Turn on LED during setup
+  
+  Serial.println();
+  Serial.println("Campus Emergency System Starting...");
+  Serial.println("=====================================");
+  
+  // Connect to WiFi
+  connectToWiFi();
+  
+  // Initialize time from NTP
+  initializeTime();
+
+  // Initialize Bluetooth
+  Serial.println("Initializing Bluetooth/BLE...");
+  BLEDevice::init("Campus-Emergency-Scanner");
+  Serial.println(" BLE Initialized.");
+  
+  // Calibrate baseline values
+  calibrateBaseline();
+  
+  // Test Telegram
+  //testTelegram();
+  
+  digitalWrite(STATUS_LED_PIN, LOW);
+  
+  Serial.println("\n System Ready! Commands:");
+  Serial.println("test     - Test Telegram");
+  Serial.println("audio    - Check microphone");
+  Serial.println("wifi     - Scan WiFi networks");
+  Serial.println("bt       - Scan Bluetooth devices");
+  Serial.println("alert    - Send emergency alert");
+  Serial.println("status   - System status");
+  Serial.println("baseline - Recalibrate baseline");
+  Serial.println("=====================================\n");
+}
+
+// ==================== MAIN LOOP ====================
+void loop() {
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    handleCommand(command);
+  }
+  
+  // Monitor sensors every 2 seconds
+  static unsigned long lastSensorUpdate = 0;
+  if (millis() - lastSensorUpdate > 2000) {
+    updateSensorReadings();
+    lastSensorUpdate = millis();
+    
+    // Check for emergency conditions
+    if (systemCalibrated) {
+      checkEmergency();
+    }
+  }
+  
+  // Blink LED (heartbeat)
+  digitalWrite(STATUS_LED_PIN, (millis() % 2000 < 100) ? HIGH : LOW);
+  delay(50);
+}
+
+// ==================== COMMAND HANDLER ====================
+void handleCommand(String command) {
+  command.toLowerCase();
+  
+  if (command == "test") {
+    testTelegram();
+  }
+  else if (command == "audio") {
+    checkMicrophone();
+  }
+  else if (command == "wifi") {
+    scanWiFi();
+  }
+  else if (command =="bt"){
+    scanBluetooth();
+  }
+  else if (command == "alert") {
+    sendEmergencyAlert();
+  }
+  else if (command == "status") {
+    showStatus();
+  }
+  else if (command == "baseline") {
+    calibrateBaseline();
+  }
+  else if (command == "debug") {
+    showDebug();
+  }
+  else {
+    Serial.println(" Commands: test, audio, wifi, bt, alert, status, baseline, debug");
+  }
+}
+
+// ==================== TIME INITIALIZATION ====================
+void initializeTime() {
+  Serial.println(" Initializing time from NTP...");
+  
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  
+  int attempts = 0;
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo) && attempts < 10) {
+    Serial.print(".");
+    delay(500);
+    attempts++;
+  }
+  
+  if (getLocalTime(&timeinfo)) {
+    Serial.println("\nTime synchronized!");
+    Serial.println("Current time: " + getRealTime());
+    timeInitialized = true;
+  } else {
+    Serial.println("\n  Time sync failed, using uptime");
+    timeInitialized = false;
+  }
+}
+
+String getRealTime() {
+  if (timeInitialized) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      char buffer[64];
+      strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S IST", &timeinfo);
+      return String(buffer);
+    }
+  }
+  // Fallback to uptime
+  unsigned long sec = millis() / 1000;
+  unsigned long min = sec / 60;
+  unsigned long hr = min / 60;
+  return String(hr % 24) + ":" + String(min % 60) + ":" + String(sec % 60) + " (uptime)";
+}
+
+// ==================== WIFI/BT COUNT HELPERS ====================
+int getWiFiDeviceCount() {
+  // Scan for networks, don't show hidden, don't cache results
+  // This is a blocking call
+  int n = WiFi.scanNetworks(false, false); 
+  WiFi.scanDelete(); // clear memory
+  return n;
+}
+
+int getBLEDeviceCount() {
+  int scanTime = 3; // 3 second scan
+  
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setActiveScan(false); // Passive scan is faster, just need count
+  
+  BLEScanResults* foundDevices = pBLEScan->start(scanTime, false); // Blocking scan
+  int n = foundDevices->getCount();
+  
+  pBLEScan->clearResults(); // Free memory
+  return n;
+}
+
+
+// ==================== BASELINE CALIBRATION ====================
+void calibrateBaseline() {
+  Serial.println("\n CALIBRATING BASELINE VALUES");
+  Serial.println("================================");
+  Serial.println("Please wait 15 seconds...");
+  Serial.println(" Ensure normal/quiet conditions");
+  
+  int soundSum = 0;
+  int wifiSum = 0;
+  int btSum = 0;
+  int samples = 5; 
+  
+  for (int i = 0; i < samples; i++) {
+    Serial.print("Sample " + String(i+1) + "/" + String(samples));
+
+    // Read sound sensor (averaged)
+    int sound = getAveragedSoundLevel();
+    soundSum += sound;
+    Serial.print(" - Sound:" + String(sound));
+    
+    // Scan WiFi devices
+    int wifi = getWiFiDeviceCount();
+    wifiSum += wifi;
+    Serial.print(" WiFi:" + String(wifi));
+    
+    // Scan Bluetooth devices
+    int bt = getBLEDeviceCount();
+    btSum += bt;
+    Serial.println(" BT:" + String(bt));
+    
+    delay(1000); // Wait 1 sec between samples
+  }
+  
+  baselineSoundLevel = soundSum / samples;
+  baselineWiFiDevices = wifiSum / samples;
+  baselineBTDevices = btSum / samples;
+  
+  Serial.println("\n BASELINE VALUES SET:");
+  Serial.println("Sound Level: " + String(baselineSoundLevel));
+  Serial.println(" WiFi Devices: " + String(baselineWiFiDevices));
+  Serial.println(" BT Devices: " + String(baselineBTDevices));
+  Serial.println("================================");
+  
+  systemCalibrated = true;
+  
+  // Send calibration complete notification
+  String message = " SYSTEM CALIBRATED\n\n";
+  message += "location " + deviceLocation + "\n";
+  message += "time " + getRealTime() + "\n\n";
+  message += " Baseline Values:\n";
+  message += "• Sound: " + String(baselineSoundLevel) + "\n";
+  message += "• WiFi: " + String(baselineWiFiDevices) + " devices\n";
+  message += "• BT: " + String(baselineBTDevices) + " devices\n\n";
+  message += " Monitoring for peaks...";
+  
+  //sendToTelegram(message);
+}
+
+// ==================== SENSOR READING & PEAK DETECTION ====================
+
+/**
+ * @brief Reads the sound sensor multiple times to average out radio noise.
+ */
+int getAveragedSoundLevel() {
+  long sum = 0;
+  int numReadings = 50; // Take 50 samples
+  for (int i = 0; i < numReadings; i++) {
+    sum += analogRead(SOUND_SENSOR_PIN);
+    delay(1); // 1ms delay between readings
+  }
+  return sum / numReadings; // Return the average
+}
+
+
+void updateSensorReadings() {
+  // Read actual sound sensor (averaged)
+  soundLevel = getAveragedSoundLevel();
+  
+  // Get real WiFi device count
+  wifiDevices = getWiFiDeviceCount();
+  
+  // Get real Bluetooth devices
+  btDevices = getBLEDeviceCount();
+  
+  // Show current readings
+  Serial.print(" Current - Sound:");
+  Serial.print(soundLevel);
+  Serial.print(" (Baseline:" + String(baselineSoundLevel) + ")");
+  Serial.print(" | WiFi:");
+  Serial.print(wifiDevices);
+  Serial.print(" (Baseline:" + String(baselineWiFiDevices) + ")");
+  Serial.print(" | BT:");
+  Serial.print(btDevices);
+  Serial.println(" (Baseline:" + String(baselineBTDevices) + ")");
+}
+
+void checkEmergency() {
+  // Calculate peak detection
+  bool soundPeak = soundLevel > (baselineSoundLevel * SOUND_PEAK_MULTIPLIER);
+  bool wifiPeak = wifiDevices > (baselineWiFiDevices * WIFI_PEAK_MULTIPLIER);
+  bool btPeak = btDevices > (baselineBTDevices * BT_PEAK_MULTIPLIER);
+  
+  int confidence = 0;
+  String reasons = "";
+  
+  if (soundPeak) {
+    
+    // VVV --- THIS IS THE NEW CODE --- VVV
+    digitalWrite(STATUS_LED_PIN, HIGH); // Quick flash
+    delay(50);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    // ^^^ --- THIS IS THE NEW CODE --- ^^^
+    
+    confidence += 40;
+    reasons += " High sound detected (" + String(soundLevel) + " vs " + String(baselineSoundLevel) + ")\n";
+  }
+  
+  if (wifiPeak) {
+    confidence += 30;
+    reasons += " WiFi spike (" + String(wifiDevices) + " vs " + String(baselineWiFiDevices) + ")\n";
+  }
+  
+  if (btPeak) {
+    confidence += 30;
+    reasons += " Bluetooth spike (" + String(btDevices) + " vs " + String(baselineBTDevices) + ")\n";
+  }
+  
+  // Trigger alert if confidence >= 70% and cooldown period passed
+  // Cooldown is 30 seconds (30000ms)
+  if (confidence >= 70 && (millis() - lastAlertTime > 30000)) {
+    Serial.println("\n🚨 PEAK DETECTED! Confidence: " + String(confidence) + "%");
+    Serial.println(reasons);
+    sendEmergencyAlert(confidence, reasons);
+  }
+}
+
+// ==================== TELEGRAM FUNCTIONS ====================
+void testTelegram() {
+  Serial.println(" Testing Telegram connection...");
+  
+  String message = " TEST MESSAGE\n\n";
+  message += "📍 Location: " + deviceLocation + "\n";
+  message += "ESP32 System Test\n";
+  message += " Time: " + getRealTime() + "\n";
+  message += " Status: OPERATIONAL\n";
+  message += " Free Memory: " + String(esp_get_free_heap_size()) + " bytes";
+  
+  if (sendToTelegram(message)) {
+    Serial.println(" Telegram test PASSED - Check your bot!");
+  } else {
+    Serial.println(" Telegram test FAILED");
+  }
+}
+
+void sendEmergencyAlert() {
+  sendEmergencyAlert(0, "Manual alert triggered");
+}
+
+void sendEmergencyAlert(int confidence, String reasons) {
+  Serial.println("🚨 Sending emergency alert...");
+  
+  String message = "🚨 CAMPUS EMERGENCY 🚨\n\n";
+  message += "location " + deviceLocation + "\n";
+  
+  if (confidence > 0) {
+    message += " Confidence: " + String(confidence) + "%\n";
+  }
+  
+  message += " time" + getRealTime() + "\n\n";
+  
+  if (reasons.length() > 0) {
+    message += " Detection Reasons:\n" + reasons + "\n";
+  }
+  
+  message += " Current Readings:\n";
+  message += "• Sound: " + String(soundLevel) + " (Baseline: " + String(baselineSoundLevel) + ")\n";
+  message += "• WiFi: " + String(wifiDevices) + " (Baseline: " + String(baselineWiFiDevices) + ")\n";
+  message += "• BT: " + String(btDevices) + " (Baseline: " + String(baselineBTDevices) + ")\n\n";
+  message += " Immediate attention required!";
+  
+  if (sendToTelegram(message)) {
+    Serial.println(" Emergency alert sent successfully!");
+    lastAlertTime = millis();
+    
+    // Rapid LED blink
+    for(int i=0; i<10; i++) {
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      delay(150);
+      digitalWrite(STATUS_LED_PIN, LOW);
+      delay(150);
+    }
+  } else {
+    Serial.println(" Failed to send emergency alert");
+  }
+}
+
+// ==================== TELEGRAM SENDING ====================
+
+/**
+ * Sends a Telegram message using a direct WiFiClientSecure connection.
+ */
+bool tryTelegramHTTPS_Direct(String message) {
+  WiFiClientSecure client;
+  
+  Serial.println("Setting up client (INSECURE)...");
+  client.setInsecure(); // Skips certificate validation
+  
+  const char* host = "api.telegram.org";
+  const int httpsPort = 443;
+
+  Serial.print("Connecting directly to ");
+  Serial.println(host);
+
+  // 1. Try to connect
+  if (!client.connect(host, httpsPort)) {
+    Serial.println(" Direct connection failed!");
+    return false;
+  }
+  Serial.println(" Direct connection successful!");
+
+  // 2. Build the HTTP request
+  String url = "/bot" + BOT_TOKEN + "/sendMessage";
+  String payload = "{\"chat_id\":\"" + CHAT_ID + "\",\"text\":\"" + simpleEscape(message) + "\"}";
+  
+  String request = "POST " + url + " HTTP/1.1\r\n";
+  request += "Host: " + String(host) + "\r\n";
+  request += "Content-Type: application/json\r\n";
+  request += "Content-Length: " + String(payload.length()) + "\r\n";
+  request += "Connection: close\r\n";
+  request += "\r\n";
+  request += payload;
+
+  // 3. Send the request
+  Serial.println("Sending direct request...");
+  client.print(request);
+
+  // 4. Wait for a response (10 second timeout)
+  unsigned long timeout = millis();
+  while (client.connected()) {
+    if (millis() - timeout > 10000) {
+      Serial.println(">>> Client Timeout !");
+      client.stop();
+      return false;
+    }
+  }
+
+  // 5. Read the response
+  Serial.println("Reading response...");
+  String response = "";
+  while (client.available()) {
+    char c = client.read();
+    response += c;
+  }
+  
+  client.stop();
+  
+  Serial.println("--- Response ---");
+  Serial.println(response);
+  Serial.println("----------------");
+  
+  // Check for "ok:true" in the response body
+  if (response.indexOf("\"ok\":true") != -1) {
+    Serial.println(" Message sent (Direct)!");
+    return true;
+  } else {
+    Serial.println(" Message failed (Direct).");
+    return false;
+  }
+}
+
+// This is the main function to call
+bool sendToTelegram(String message) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" No WiFi connection");
+    return false;
+  }
+  
+  Serial.println(" Connecting to Telegram...");
+
+  // --- MEMORY FIX ---
+  Serial.println("Disabling BLE to free memory...");
+  BLEDevice::deinit(false); // Disable BLE stack
+  delay(100); 
+  // --- END OF FIX ---
+
+  // Call the direct HTTPS function
+  bool httpsSuccess = tryTelegramHTTPS_Direct(message); 
+
+  // --- MEMORY FIX ---
+  Serial.println("Re-initializing BLE...");
+  BLEDevice::init("Campus-Emergency-Scanner"); // Re-start BLE
+  // --- END OF FIX ---
+
+  return httpsSuccess;
+}
+
+String simpleEscape(String input) {
+  String output = "";
+  for (int i = 0; i < input.length(); i++) {
+    char c = input[i];
+    if (c == '\"') output += "\\\"";
+    else if (c == '\n') output += "\\n";
+    else if (c == '\\') output += "\\\\";
+    else output += c;
+  }
+  return output;
+}
+
+String urlEncode(String str) {
+  String encoded = "";
+  for (int i = 0; i < str.length(); i++) {
+    char c = str[i];
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += c;
+    } else if (c == ' ') {
+      encoded += "%20";
+    } else if (c == '\n') {
+      encoded += "%0A";
+    } else {
+      encoded += "%";
+      if (c < 16) encoded += "0";
+      encoded += String(c, HEX);
+    }
+  }
+  return encoded;
+}
+
+// ==================== WIFI CONNECTION ====================
+void connectToWiFi() {
+  Serial.print(" Connecting to WiFi: ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    if (attempts % 10 == 0) Serial.println();
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n WiFi Connected!");
+    Serial.println(" IP: " + WiFi.localIP().toString());
+    Serial.println(" RSSI: " + String(WiFi.RSSI()) + " dBm");
+  } else {
+    Serial.println("\n WiFi Failed!");
+  }
+}
+
+// ==================== MICROPHONE CHECK ====================
+void checkMicrophone() {
+  Serial.println("\n🎤 MICROPHONE DIAGNOSTIC");
+  Serial.println("======================");
+  
+  Serial.println(" Reading microphone on GPIO " + String(SOUND_SENSOR_PIN) + "...");
+  
+  int readings[10];
+  int sum = 0;
+  
+  for (int i = 0; i < 10; i++) {
+    readings[i] = analogRead(SOUND_SENSOR_PIN); // This can be noisy
+    sum += readings[i];
+    Serial.println("   Reading " + String(i+1) + ": " + String(readings[i]));
+    delay(300);
+  }
+  
+  int average = sum / 10;
+  Serial.println(" Average: " + String(average));
+  
+  if (average == 0) {
+    Serial.println(" PROBLEM: Microphone reading 0");
+    Serial.println(" SOLUTION: Check wiring - OUT pin to GPIO " + String(SOUND_SENSOR_PIN));
+  }
+  else if (average > 4090) { // Changed from 2500 to catch floating pins
+    Serial.println(" PROBLEM: Microphone reading max value (floating pin)");
+    Serial.println(" SOLUTION: Ensure proper GND and AO connection");
+  }
+  else {
+    Serial.println(" Microphone working normally");
+  }
+  
+  Serial.println("======================");
+}
+
+// ==================== WIFI SCAN ====================
+void scanWiFi() {
+  Serial.println("\n📡 SCANNING WiFi NETWORKS");
+  Serial.println("========================");
+  
+  int n = WiFi.scanNetworks();
+  if (n == 0) {
+    Serial.println(" No networks found");
+  } else {
+    Serial.println(" Found " + String(n) + " networks:");
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("   %d: %s (%ddBm) Ch%d\n", 
+                    i+1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
+    }
+  }
+  WiFi.scanDelete(); // Clear scan results from memory
+  Serial.println("========================");
+}
+
+// ==================== BLUETOOTH SCAN ====================
+void scanBluetooth() {
+  Serial.println("\n SCANNING Bluetooth/BLE DEVICES");
+  Serial.println("================================");
+  
+  int scanTime = 5; // Scan for 5 seconds
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  
+  pBLEScan->setActiveScan(true); // Active scan gets names
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(99);
+
+  Serial.println("Scanning for " + String(scanTime) + " seconds...");
+  
+  BLEScanResults* foundDevices = pBLEScan->start(scanTime, false); 
+  
+  int n = foundDevices->getCount();
+
+  if (n == 0) {
+    Serial.println(" No BLE devices found");
+  } else {
+    Serial.println(" Found " + String(n) + " devices:");
+    for (int i = 0; i < n; i++) {
+      BLEAdvertisedDevice device = foundDevices->getDevice(i);
+
+      Serial.print("   " + String(i + 1) + ": ");
+      
+      if (device.haveName()) {
+        Serial.print(device.getName().c_str());
+      } else {
+        Serial.print("Unknown Device");
+      }
+      
+      Serial.print(" [");
+      Serial.print(device.getAddress().toString().c_str());
+      Serial.print("] (RSSI: ");
+      Serial.print(device.getRSSI());
+      Serial.println("dBm)");
+    }
+  }
+  
+  pBLEScan->clearResults(); // Free up memory
+  Serial.println("================================");
+}
+
+
+// ==================== UTILITY FUNCTIONS ====================
+void showStatus() {
+  Serial.println("\n SYSTEM STATUS");
+  Serial.println("================");
+  Serial.println("📍 " + deviceLocation);
+  Serial.println("time " + getRealTime());
+  Serial.println(" WiFi: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : " Disconnected"));
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println(" IP: " + WiFi.localIP().toString());
+  }
+  Serial.println("\n Calibration: " + String(systemCalibrated ? " Done" : " Pending"));
+  if (systemCalibrated) {
+    Serial.println("\n BASELINE VALUES:");
+    Serial.println(" Sound: " + String(baselineSoundLevel));
+    Serial.println(" WiFi: " + String(baselineWiFiDevices));
+    Serial.println(" BT: " + String(baselineBTDevices));
+    Serial.println("\n CURRENT VALUES:");
+    Serial.println(" Sound: " + String(soundLevel));
+    Serial.println(" WiFi: " + String(wifiDevices));
+    Serial.println(" BT: " + String(btDevices));
+  }
+  Serial.println("================");
+}
+
+void showDebug() {
+  Serial.println("\n DEBUG INFORMATION");
+  Serial.println("===================");
+  Serial.println("WiFi Status: " + String(WiFi.status()));
+  Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+  Serial.println("Time Sync: " + String(timeInitialized ? "✅" : "❌"));
+  Serial.println("Bot Token: " + BOT_TOKEN.substring(0, 20) + "...");
+  Serial.println("Chat ID: " + CHAT_ID);
+  Serial.println("Free Memory: " + String(esp_get_free_heap_size()) + " bytes");
+  Serial.println("Uptime: " + String(millis()/1000) + " seconds");
+  Serial.println("===================");
+}
