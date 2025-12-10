@@ -25,10 +25,10 @@ int main() {
     // Create an object using the second constructor (square)
     Rectangle square(4.0);
 
-    cout << " Rectangle Details" << std::endl;
-    cout << "Area: " << rect.calculateArea() << std::endl;
-    cout << "Perimeter: " << rect.calculateparimater() << std::endl;
-    std::cout << "Area: " << square.calculateArea() << std::endl;
-    cout << "Perimeter: " << square.calculateparimater() << std::endl;
+    cout << " Rectangle Details" <<endl;
+    cout << "Area: " << rect.calculateArea() <<endl;
+    cout << "Perimeter: " << rect.calculateparimater() <<endl;
+    std::cout << "Area: " << square.calculateArea() << endl;
+    cout << "Perimeter: " << square.calculateparimater() << endl;
 return 0;
 }
