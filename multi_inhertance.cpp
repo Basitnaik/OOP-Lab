@@ -22,7 +22,7 @@ class student:public Person{
         cin>>sub2;
         cout<<"enter marks of sub3"<<endl;
         cin>>sub3;
-        getname();
+       
     }
   
     };

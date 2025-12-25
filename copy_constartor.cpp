@@ -9,7 +9,7 @@ class Bill{
     int calcluatebill(){
         return units*5;
     }
-    Bill( const Bill&b){
+    Bill(  Bill&b){
         units=b.units;
     }
     void showbill(){

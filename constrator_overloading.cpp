@@ -22,8 +22,8 @@ int main(){
     Rectangle rect1(2,3);
     Rectangle rect2(7);
     cout<<rect1.area()<<endl;
-    cout<<rect1.paremeter();
-    cout<<rect2.area();
-    cout<<rect2.paremeter();
+    cout<<rect1.paremeter()<<endl;
+    cout<<rect2.area()<<endl;
+    cout<<rect2.paremeter()<<endl;
     return 0;
 }
