@@ -29,12 +29,14 @@ int main(){
     Image i;
     Vedio v;
     Audio a;
-    MediaFile * m;
-    m=&i;
-    m->play();
-    m=&v;
-    m->play();
-    m=&a;
-    m->play();
+    MediaFile * M[3];
+    M[0]=&i;
+    M[1]=&v;
+    M[2]=&a;
+    for(int j=0;j<3;j++){
+        M[j]->play();
+    }
     return 0;
+
+    
 }
